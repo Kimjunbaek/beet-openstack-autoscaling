@@ -1,0 +1,92 @@
+name: BEET CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      failure_probe:
+        description: "Training only: deliberately fail the CP gate to verify packaging is blocked"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beet-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: ${{ matrix.component }} regression tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: CP
+            directory: cp
+          - component: EC2
+            directory: ec2/analyzer
+    env:
+      PYTHONUTF8: "1"
+      AWS_EC2_METADATA_DISABLED: "true"
+      TEST_DIRECTORY: ${{ matrix.directory }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Validate Python syntax
+        run: python -m compileall -q cp ec2/analyzer
+      - name: Run offline regression tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          python -X utf8 -m unittest discover -s "$TEST_DIRECTORY" -p 'test_*.py' -v 2>&1 | tee test-results/tests.log
+      - name: Controlled failure probe (manual training only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.failure_probe && matrix.component == 'CP' }}
+        run: |
+          echo "Intentional training failure: verify that the verified-source job is skipped."
+          exit 1
+      - name: Save test logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: test-logs-${{ matrix.component }}-${{ github.run_id }}
+          path: test-results/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  verified-source:
+    name: Package verified source
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build source archive
+        run: git archive --format=zip --output=beet-verified-source.zip HEAD
+      - name: Save verified source
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: beet-verified-source-${{ github.sha }}
+          path: beet-verified-source.zip
+          if-no-files-found: error
+          retention-days: 14
