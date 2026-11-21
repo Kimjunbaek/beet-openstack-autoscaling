@@ -1,0 +1,121 @@
+---
+- name: Select an existing worker for verification
+  hosts: beet_control
+  gather_facts: false
+  vars:
+    verify_worker_name: "{{ worker_name | default('beet-k3s-w2') }}"
+  tasks:
+    - name: Select the current worker for a standalone verification
+      when: groups.get('beet_verify_worker', []) | length == 0
+      block:
+        - name: Read the registered worker's current InternalIP
+          ansible.builtin.command:
+            argv:
+              - sudo
+              - -n
+              - k3s
+              - kubectl
+              - get
+              - node
+              - "{{ verify_worker_name }}"
+              - -o
+              - 'jsonpath={.status.addresses[?(@.type=="InternalIP")].address}'
+          changed_when: false
+          register: worker_internal_ip
+
+        - name: Require one registered InternalIP
+          ansible.builtin.assert:
+            that: worker_internal_ip.stdout.split() | length == 1
+
+        - name: Set the SSH target for verification
+          ansible.builtin.add_host:
+            name: "{{ verify_worker_name }}"
+            groups: beet_verify_worker
+            ansible_host: "{{ worker_internal_ip.stdout }}"
+            ansible_user: ubuntu
+            ansible_python_interpreter: /usr/bin/python3
+
+- name: Verify the worker and pod networking
+  hosts: beet_verify_worker
+  gather_facts: false
+  vars:
+    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/beet-worker-ansible"
+    ansible_ssh_common_args: "-o IdentitiesOnly=yes -o UserKnownHostsFile={{ playbook_dir }}/known_hosts -o StrictHostKeyChecking=yes"
+    kubectl: [sudo, -n, k3s, kubectl]
+    test_namespace: beet-scale-test
+  tasks:
+    - name: Verify Ansible SSH and Python access
+      ansible.builtin.ping:
+
+    - name: Verify the K3s agent is active
+      ansible.builtin.command: systemctl is-active k3s-agent
+      changed_when: false
+
+    - name: Wait for the worker to appear in Kubernetes
+      ansible.builtin.command:
+        argv: "{{ kubectl + ['get', 'node', inventory_hostname, '--ignore-not-found', '-o', 'name'] }}"
+      delegate_to: beet-k3s-cp
+      register: registered_node
+      until: registered_node.rc == 0 and registered_node.stdout == 'node/' + inventory_hostname
+      retries: 24
+      delay: 5
+      changed_when: false
+
+    - name: Confirm Kubernetes marks this worker Ready
+      ansible.builtin.command:
+        argv: "{{ kubectl + ['wait', '--for=condition=Ready', 'node/' + inventory_hostname, '--timeout=120s'] }}"
+      delegate_to: beet-k3s-cp
+      changed_when: false
+
+    - name: Verify that a pod on the worker can resolve a cluster service
+      delegate_to: beet-k3s-cp
+      block:
+        - name: Create a short-lived DNS test pod on this worker
+          ansible.builtin.command:
+            argv: "{{ kubectl + ['-n', test_namespace, 'create', '-o', 'name', '-f', '-'] }}"
+            stdin: |
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                generateName: beet-worker-dns-
+              spec:
+                restartPolicy: Never
+                activeDeadlineSeconds: 90
+                automountServiceAccountToken: false
+                nodeSelector:
+                  kubernetes.io/hostname: {{ inventory_hostname }}
+                containers:
+                  - name: dns
+                    image: busybox:1.37.0
+                    command: [nslookup, kubernetes.default.svc.cluster.local]
+                    resources:
+                      requests: {cpu: 10m, memory: 8Mi}
+                      limits: {cpu: 50m, memory: 32Mi}
+          register: test_pod
+
+        - name: Wait for the DNS test to succeed
+          ansible.builtin.command:
+            argv: "{{ kubectl + ['-n', test_namespace, 'wait', '--for=jsonpath={.status.phase}=Succeeded', test_pod.stdout, '--timeout=100s'] }}"
+          changed_when: false
+
+        - name: Read the DNS response
+          ansible.builtin.command:
+            argv: "{{ kubectl + ['-n', test_namespace, 'logs', test_pod.stdout] }}"
+          register: dns_response
+          changed_when: false
+
+        - name: Report the verified worker and DNS response
+          ansible.builtin.debug:
+            msg:
+              worker: "{{ inventory_hostname }}"
+              address: "{{ ansible_host }}"
+              dns: "{{ dns_response.stdout_lines }}"
+      always:
+        - name: Remove the DNS test pod
+          ansible.builtin.command:
+            argv: "{{ kubectl + ['-n', test_namespace, 'delete', test_pod.stdout, '--ignore-not-found', '--timeout=30s'] }}"
+          when: test_pod is defined and test_pod is succeeded and test_pod.stdout is match('^pod/beet-worker-dns-')
+
+    - name: Record successful worker verification for subsequent plays
+      ansible.builtin.set_fact:
+        worker_verification_passed: true

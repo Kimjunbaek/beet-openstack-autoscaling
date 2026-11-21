@@ -1,0 +1,321 @@
+---
+- name: Provision one OpenStack worker
+  tags: [create_vm]
+  hosts: beet_control
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    os_cloud: beet
+    worker_network: vpc-1
+    worker_image: Ubuntu-22.04
+    worker_flavor: t3.medium
+    automation_tag: k3s-worker-v1
+  module_defaults:
+    openstack.cloud.server_info:
+      cloud: "{{ os_cloud }}"
+      api_timeout: 15
+    openstack.cloud.server:
+      cloud: "{{ os_cloud }}"
+      api_timeout: 15
+    openstack.cloud.port_info:
+      cloud: "{{ os_cloud }}"
+      api_timeout: 15
+    openstack.cloud.port:
+      cloud: "{{ os_cloud }}"
+      api_timeout: 15
+  tasks:
+    - name: Check the requested worker name and security group
+      ansible.builtin.assert:
+        that:
+          - worker_name | default('') is match('^beet-k3s-w([2-9]|[1-9][0-9]+)$')
+          - worker_security_group | default('') | length > 0
+        fail_msg: Set worker_name to a scaling worker such as beet-k3s-w2, and worker_security_group to its OpenStack security group.
+
+    - name: Query OpenStack for the worker
+      openstack.cloud.server_info:
+        name: "{{ worker_name }}"
+      register: existing_server
+
+    - name: Reject ambiguous or unmanaged instances
+      ansible.builtin.assert:
+        that:
+          - existing_server.servers | length <= 1
+          - existing_server.servers | length == 0 or (existing_server.servers[0].metadata | default({})).get('beet_worker_automation') == automation_tag
+        fail_msg: Resolve the existing instance with this name before provisioning.
+
+    - name: Look up the Kubernetes node name
+      ansible.builtin.command:
+        argv: [sudo, -n, k3s, kubectl, get, node, "{{ worker_name }}", --ignore-not-found, -o, name]
+      register: existing_node
+      changed_when: false
+
+    - name: Reject a Kubernetes node left behind by a different VM
+      ansible.builtin.assert:
+        that: existing_server.servers | length > 0 or existing_node.stdout | length == 0
+        fail_msg: The node name remains in Kubernetes. Resolve that record before reusing the name.
+
+    - name: Look up the persistent Neutron port
+      openstack.cloud.port_info:
+        name: "{{ worker_name }}-port"
+      register: existing_port
+
+    - name: Reject ambiguous, unmanaged, or mismatched ports
+      ansible.builtin.assert:
+        that:
+          - execution_step | default('legacy') != 'create_vm' or existing_port.ports | length == 1
+          - existing_port.ports | length <= 1
+          - existing_server.servers | length == 0 or existing_port.ports | length == 1
+          - existing_port.ports | length == 0 or (existing_port.ports[0].description | default('')) == automation_tag
+          - >-
+            existing_port.ports | length == 0 or
+            (existing_port.ports[0].device_id | default('')) ==
+            (existing_server.servers[0].id if existing_server.servers | length else '')
+        fail_msg: The reserved port is ambiguous or its VM attachment differs from the requested worker.
+
+    - name: Reserve a Neutron port with a fixed IP
+      openstack.cloud.port:
+        name: "{{ worker_name }}-port"
+        description: "{{ automation_tag }}"
+        network: "{{ worker_network }}"
+        security_groups: ["{{ worker_security_group }}"]
+        state: present
+      register: new_port
+      when: existing_port.ports | length == 0 and execution_step | default('legacy') != 'create_vm'
+
+    - name: Select the reserved port
+      ansible.builtin.set_fact:
+        worker_port: "{{ existing_port.ports[0] if existing_port.ports | length else new_port.port }}"
+
+    - name: Confirm that exactly one IPv4 address is reserved
+      ansible.builtin.assert:
+        that: worker_port.fixed_ips | map(attribute='ip_address') | select('match', '^[0-9]+[.]') | list | length == 1
+        fail_msg: The worker port must have exactly one IPv4 address.
+
+    - name: Create or reuse the worker with the reserved port
+      openstack.cloud.server:
+        name: "{{ worker_name }}"
+        image: "{{ worker_image }}"
+        flavor: "{{ worker_flavor }}"
+        nics:
+          - port-id: "{{ worker_port.id }}"
+        metadata:
+          beet_worker_automation: "{{ automation_tag }}"
+          beet_operation_id: "{{ automation_operation_id | default('legacy') }}"
+        auto_ip: false
+        timeout: 300
+        wait: true
+        state: present
+        userdata: |
+          #cloud-config
+          ssh_authorized_keys:
+            - {{ lookup('file', lookup('env', 'HOME') + '/.ssh/beet-worker-ansible.pub') }}
+          runcmd:
+            - [sh, -c, 'printf "BEET_SSH_HOST_KEY "; cat /etc/ssh/ssh_host_ed25519_key.pub']
+          output:
+            all: '| tee -a /var/log/cloud-init-output.log /dev/console'
+      register: provisioned
+
+    - name: Confirm the VM is active
+      ansible.builtin.assert:
+        that: provisioned.server.status == 'ACTIVE'
+
+    - name: Select the worker IPv4 address
+      ansible.builtin.set_fact:
+        worker_address: "{{ worker_port.fixed_ips | map(attribute='ip_address') | select('match', '^[0-9]+[.]') | first }}"
+
+    - name: Read the SSH host key from the authenticated Nova console
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/console-host-key.py", "{{ os_cloud }}", "{{ provisioned.server.id }}", "{{ worker_address }}"]
+      register: verified_key
+      retries: 24
+      delay: 5
+      until: verified_key.rc == 0
+      changed_when: false
+
+    - name: Record the trusted worker host key
+      ansible.builtin.known_hosts:
+        path: "{{ playbook_dir }}/known_hosts"
+        name: "{{ worker_address }}"
+        key: "{{ verified_key.stdout }}"
+        state: present
+
+    - name: Pass the new worker to registration and verification
+      ansible.builtin.add_host:
+        name: "{{ worker_name }}"
+        groups: [beet_provisioned_worker, beet_verify_worker]
+        ansible_host: "{{ worker_address }}"
+        ansible_user: ubuntu
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Resolve the explicitly requested worker for an individual step
+  hosts: beet_control
+  gather_facts: false
+  tags: [always]
+  tasks:
+    - name: Load worker execution context without creating resources
+      when: execution_step | default('') in ['join', 'verify', 'lb_add']
+      block:
+        - name: Look up the existing worker port
+          openstack.cloud.port_info:
+            cloud: "{{ os_cloud | default('beet') }}"
+            name: "{{ worker_name }}-port"
+          register: execution_port
+
+        - name: Require the owned port
+          ansible.builtin.assert:
+            that:
+              - execution_port.ports | length == 1
+              - execution_port.ports[0].description == 'k3s-worker-v1'
+              - execution_port.ports[0].device_id | length > 0
+
+        - name: Set the existing port and worker address
+          ansible.builtin.set_fact:
+            worker_port: "{{ execution_port.ports[0] }}"
+            worker_address: "{{ execution_port.ports[0].fixed_ips | map(attribute='ip_address') | select('match', '^[0-9]+[.]') | first }}"
+
+        - name: Add only the requested existing worker to inventory
+          ansible.builtin.add_host:
+            name: "{{ worker_name }}"
+            groups: [beet_provisioned_worker, beet_verify_worker]
+            ansible_host: "{{ worker_address }}"
+            ansible_user: ubuntu
+            ansible_python_interpreter: /usr/bin/python3
+
+- name: Register the provisioned worker with K3s
+  tags: [join]
+  hosts: beet_provisioned_worker
+  gather_facts: false
+  vars:
+    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/beet-worker-ansible"
+    ansible_ssh_common_args: "-o IdentitiesOnly=yes -o UserKnownHostsFile={{ playbook_dir }}/known_hosts -o StrictHostKeyChecking=yes"
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 180
+
+    - name: Wait for cloud-init
+      ansible.builtin.command:
+        argv: [timeout, 180, cloud-init, status, --wait]
+      changed_when: false
+
+    - name: Check whether the K3s agent is already installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s-agent.service
+      register: k3s_agent
+
+    - name: Install the matching K3s agent on a fresh worker
+      when: not k3s_agent.stat.exists
+      block:
+        - name: Get the control plane K3s version
+          ansible.builtin.command:
+            argv: [sudo, -n, k3s, kubectl, version, -o, json]
+          delegate_to: beet-k3s-cp
+          register: control_version
+          changed_when: false
+
+        - name: Download the K3s installer
+          ansible.builtin.get_url:
+            url: https://get.k3s.io
+            dest: /var/tmp/beet-k3s-install.sh
+            mode: '0700'
+
+        - name: Mint a short-lived worker registration token
+          ansible.builtin.command:
+            argv: [sudo, -n, k3s, token, create, --ttl, 15m, --description, "{{ inventory_hostname }}"]
+          delegate_to: beet-k3s-cp
+          register: worker_token
+          no_log: true
+
+        - name: Install and start the K3s agent
+          ansible.builtin.command:
+            argv: [sh, /var/tmp/beet-k3s-install.sh, agent]
+          become: true
+          environment:
+            INSTALL_K3S_VERSION: "{{ (control_version.stdout | from_json).serverVersion.gitVersion }}"
+            K3S_URL: "https://{{ k3s_control_address | default('192.0.2.40') }}:6443"
+            K3S_TOKEN: "{{ worker_token.stdout }}"
+            K3S_NODE_NAME: "{{ inventory_hostname }}"
+            K3S_NODE_IP: "{{ ansible_host }}"
+          register: install_agent
+          no_log: true
+      rescue:
+        - name: Report the installation error with the token redacted
+          ansible.builtin.fail:
+            msg: >-
+              K3s installation failed.
+              {{
+                ((install_agent | default({})).get('stdout', '') + ' ' +
+                 (install_agent | default({})).get('stderr', ''))
+                | regex_replace('K10[0-9A-Fa-f]+::[A-Za-z0-9_.:-]+', '[redacted]')
+                | regex_replace('(?<![A-Za-z0-9])[a-z0-9]{6}[.][a-z0-9]{16}(?![A-Za-z0-9])', '[redacted]')
+                | trim
+              }}
+
+    - name: Ensure the installed agent is enabled and running
+      ansible.builtin.systemd_service:
+        name: k3s-agent
+        enabled: true
+        state: started
+      become: true
+
+- name: Verify the provisioned worker
+  tags: [verify]
+  ansible.builtin.import_playbook: verify.yml
+
+- name: Register the verified worker in Octavia
+  tags: [lb_add]
+  hosts: beet_control
+  gather_facts: false
+  vars:
+    os_cloud: beet
+    service_host: nextcloud.example.org
+  tasks:
+    - name: Verify Nextcloud and reconcile the Octavia member
+      when: octavia_pool_id is defined
+      block:
+        - name: Require a verified worker and target VIP
+          ansible.builtin.assert:
+            that:
+              - hostvars[worker_name].worker_verification_passed | default(false)
+              - octavia_vip | default('') | length > 0
+
+        - name: Read Nextcloud status directly through the worker
+          ansible.builtin.uri:
+            url: "http://{{ worker_address }}/status.php"
+            headers:
+              Host: "{{ service_host }}"
+            use_proxy: false
+            timeout: 5
+          register: worker_http
+          until: worker_http.status == 200 and worker_http.json.installed | default(false)
+          retries: 12
+          delay: 5
+
+        - name: Wait for the worker to be an online HTTP pool member
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_playbook_python }}"
+              - "{{ playbook_dir }}/octavia-member.py"
+              - "{{ os_cloud }}"
+              - "{{ octavia_pool_id }}"
+              - "{{ worker_name }}"
+              - "{{ worker_address }}"
+              - "{{ (worker_port.fixed_ips | selectattr('ip_address', 'equalto', worker_address) | first).subnet_id }}"
+          register: octavia_member
+          changed_when: octavia_member.stdout is match('^created ')
+
+        - name: Verify Nextcloud through the Octavia VIP
+          ansible.builtin.uri:
+            url: "http://{{ octavia_vip }}/status.php"
+            headers:
+              Host: "{{ service_host }}"
+            use_proxy: false
+            timeout: 5
+          register: vip_http
+          until: vip_http.status == 200 and vip_http.json.installed | default(false)
+          retries: 6
+          delay: 3
+
+        - name: Report the Octavia member and HTTP result
+          ansible.builtin.debug:
+            msg: "{{ octavia_member.stdout }}; VIP HTTP {{ vip_http.status }}"

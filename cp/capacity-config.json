@@ -1,0 +1,36 @@
+{
+  "os_cloud": "beet",
+  "physical_host": "beet-host1",
+  "host_cpu_limit": 0.85,
+  "host_cpu_reserve": 1,
+  "host_memory_reserve": 2147483648,
+  "host_disk_reserve": 10737418240,
+  "baseline_nodes": [
+    "beet-k3s-cp",
+    "beet-k3s-w1"
+  ],
+  "workers": [
+    "beet-k3s-w2",
+    "beet-k3s-w3"
+  ],
+  "worker_network": "vpc-1",
+  "worker_image": "Ubuntu-22.04",
+  "allowed_flavors": [
+    "t3.medium",
+    "t3.medium-6g",
+    "t3.large",
+    "m1.large",
+    "t3.xlarge"
+  ],
+  "minimum_disk_gb": 30,
+  "node_cpu_reserve": 0.25,
+  "node_memory_reserve": 805306368,
+  "drain_timeout_seconds": 300,
+  "worker_security_group": "00000000-0000-4000-8000-782b1339ff55",
+  "octavia_pool_id": "00000000-0000-4000-8000-91e4bff8e28d",
+  "octavia_vip": "192.0.2.252",
+  "service_host": "nextcloud.example.org",
+  "control_address": "192.0.2.40",
+  "ansible_playbook": "/home/ubuntu/.local/bin/ansible-playbook",
+  "execution_only": true
+}
