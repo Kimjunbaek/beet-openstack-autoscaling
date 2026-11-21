@@ -1,0 +1,122 @@
+[
+  {
+    "source": "beet-worker-automation/provision.yml",
+    "public": "cp\\provision.yml",
+    "sanitized": true
+  },
+  {
+    "source": "beet-worker-automation/verify.yml",
+    "public": "cp\\verify.yml",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer-ssh-command.sh",
+    "public": "cp\\analyzer-ssh-command.sh",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/console-host-key.py",
+    "public": "cp\\console-host-key.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/octavia-member.py",
+    "public": "cp\\octavia-member.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/capacity-controller.py",
+    "public": "cp\\capacity-controller.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/capacity-config.json",
+    "public": "cp\\capacity-config.json",
+    "sanitized": true
+  },
+  {
+    "source": "beet-worker-automation/inventory.ini",
+    "public": "cp\\inventory.ini",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/worker-exec.py",
+    "public": "cp\\worker-exec.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/test_worker_exec.py",
+    "public": "cp\\test_worker_exec.py",
+    "sanitized": true
+  },
+  {
+    "source": "beet-worker-automation/test_capacity.py",
+    "public": "cp\\test_capacity.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/actions.py",
+    "public": "ec2\\analyzer\\actions.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/config.py",
+    "public": "ec2\\analyzer\\config.py",
+    "sanitized": true
+  },
+  {
+    "source": "beet-worker-automation/analyzer/decide.py",
+    "public": "ec2\\analyzer\\decide.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/executor.py",
+    "public": "ec2\\analyzer\\executor.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/forecast.py",
+    "public": "ec2\\analyzer\\forecast.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/k8s_api.py",
+    "public": "ec2\\analyzer\\k8s_api.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/main.py",
+    "public": "ec2\\analyzer\\main.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/openstack_api.py",
+    "public": "ec2\\analyzer\\openstack_api.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/prom.py",
+    "public": "ec2\\analyzer\\prom.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/saturation.py",
+    "public": "ec2\\analyzer\\saturation.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/test_ec2_orchestration.py",
+    "public": "ec2\\analyzer\\test_ec2_orchestration.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/analyzer/test_worker_roles.py",
+    "public": "ec2\\analyzer\\test_worker_roles.py",
+    "sanitized": false
+  },
+  {
+    "source": "beet-worker-automation/README.md",
+    "public": "docs/implementation-notes.md",
+    "sanitized": false
+  }
+]
