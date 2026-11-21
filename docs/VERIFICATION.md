@@ -19,3 +19,9 @@ EC2의 `test_worker_roles.py`와 `test_ec2_orchestration.py` 19개가 통과했�
 최초 Windows CP 테스트는 Linux 전용 `fcntl`과 OpenStack SDK 미설치로 import 단계에서 실패했다. 작업용 격리 폴더에 SDK를 설치하고 Windows 보조 실행기에서 `fcntl`만 대체한 뒤 CP 로직 테스트 20개 통과를 확인했다. 운영 코드는 변경하지 않았으며 SDK 자원·명령·저장 동작은 기존 테스트의 모의 객체를 사용했다.
 
 명령 유효성·단계별 실행 제한·중복 요청·자원 식별자·삭제 전제 검사에는 의미가 있지만 Linux `flock`, 실제 OpenStack 권한, Ansible·kubectl·SSH 실행의 검증은 아니다. 이 보조 실행기는 공개 정리 과정에서 추가한 도구이며 과거 Linux 20개 테스트 기록과 따로 구분한다.
+
+## GitHub Actions CI — 2026-11-21 추가
+
+GitHub Ubuntu / Python 3.12에서 CP 20개와 EC2 19개 회귀 테스트를 실행하고 모두 통과했다. Windows 보조 실행기를 사용하지 않고 Linux에서 기존 CP 테스트를 실행한 결과다. 다만 테스트 내부의 자원·명령 모의 객체는 그대로 사용하므로 실제 VM 생성·네트워크·잠금 경합 검증은 아니다.
+
+수동 실패 입력으로 CP의 지정한 교육용 단계를 실패시켰을 때 후속 소스 패키징이 건너뛰어지는 것도 확인했다. 코드의 결함을 발견한 것과 구분한다. 실행 링크와 구성 설명은 [CI.md](CI.md)에 기록했다. 운영 배포 CD는 구현 범위에 포함하지 않았다.
