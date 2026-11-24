@@ -33,6 +33,8 @@ jobs:
             directory: cp
           - component: EC2
             directory: ec2/analyzer
+          - component: CD
+            directory: cd
     env:
       PYTHONUTF8: "1"
       AWS_EC2_METADATA_DISABLED: "true"
@@ -50,7 +52,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
       - name: Validate Python syntax
-        run: python -m compileall -q cp ec2/analyzer
+        run: python -m compileall -q cp ec2/analyzer cd
       - name: Run offline regression tests
         shell: bash
         run: |
