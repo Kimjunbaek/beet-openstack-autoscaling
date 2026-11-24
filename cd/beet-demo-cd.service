@@ -1,0 +1,12 @@
+[Unit]
+Description=Deploy CI-approved BEET demo to K3s
+Wants=network-online.target
+After=network-online.target k3s.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/beet-demo-cd
+ExecStart=/usr/bin/python3 -u /home/ubuntu/beet-demo-cd/pull_deploy.py
+UMask=0077
+TimeoutStartSec=420

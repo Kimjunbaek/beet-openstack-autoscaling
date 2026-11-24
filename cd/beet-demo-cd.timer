@@ -1,0 +1,10 @@
+[Unit]
+Description=Check BEET demo main and CI every three minutes
+
+[Timer]
+OnBootSec=90s
+OnUnitInactiveSec=180s
+Unit=beet-demo-cd.service
+
+[Install]
+WantedBy=timers.target
