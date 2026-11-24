@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 import urllib.request
 
 REPO = 'Kimjunbaek/beet-openstack-autoscaling'
@@ -97,11 +98,18 @@ def manifest(sha, source):
 def health(sha):
     address = kubectl('get', 'service', APP, '-o', 'jsonpath={.spec.clusterIP}').strip()
     req = urllib.request.Request('http://' + address + ':8080/healthz')
-    with urllib.request.urlopen(req, timeout=10) as res:
-        value = json.load(res)
-        if res.status != 200 or value.get('status') != 'ok' or value.get('release') != sha:
-            raise RuntimeError('HTTP release verification failed')
-    return value
+    for attempt in range(10):
+        try:
+            with urllib.request.urlopen(req, timeout=3) as res:
+                value = json.load(res)
+                if res.status != 200 or value.get('status') != 'ok' or value.get('release') != sha:
+                    raise RuntimeError('HTTP release verification failed')
+            return value
+        except (OSError, ValueError, RuntimeError):
+            if attempt == 9:
+                raise RuntimeError('HTTP release verification failed') from None
+            # Service endpoint changes may briefly lag behind Deployment readiness.
+            time.sleep(2)
 
 def deploy(sha, source, run_id):
     release = manifest(sha, source)

@@ -1,6 +1,7 @@
 import copy
+import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import app
 import pull_deploy as cd
 
@@ -59,6 +60,14 @@ class CDTests(unittest.TestCase):
             status, value = app.response('/healthz')
         self.assertEqual((status, value['release']), (200, SHA))
         self.assertEqual(app.response('/missing')[0], 404)
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        response.__enter__.return_value.read.return_value = json.dumps(value).encode()
+        with patch.object(cd, 'kubectl', return_value='10.0.0.1'), \
+             patch.object(cd.urllib.request, 'urlopen', side_effect=[OSError('endpoint updating'), response]), \
+             patch.object(cd.time, 'sleep') as sleep:
+            self.assertEqual(cd.health(SHA)['release'], SHA)
+            sleep.assert_called_once_with(2)
 
 if __name__ == '__main__':
     unittest.main()
