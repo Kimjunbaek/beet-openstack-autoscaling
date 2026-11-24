@@ -90,7 +90,15 @@ main에 push하거나 PR을 열면 GitHub Ubuntu / Python 3.12에서 CP 20개와
 
 [실행 결과 보기](https://github.com/Kimjunbaek/beet-openstack-autoscaling/actions/workflows/ci.yml) · [CI 구조·검증 기록·면접 설명](docs/CI.md)
 
-이 단계는 **CI와 검증 소스 패키징**입니다. 운영 서버에 배포하는 CD는 연결하지 않았습니다. CI에서는 모의 객체 기반 회귀 테스트를 실행하며 실제 VM을 생성·삭제하지 않습니다.
+이 CI는 **자동 테스트와 검증 소스 패키징**입니다. CI에서는 모의 객체 기반 회귀 테스트를 실행하며 실제 VM을 생성·삭제하지 않습니다.
+
+## 테스트 앱 CD
+
+2026-11-24 별도 테스트 앱의 CD를 추가했습니다. CP의 배포기가 약 3분 간격으로 현재 main의 CI 성공을 확인하고, 동일 커밋의 `cd/app.py`를 K3s의 `beet-cd-demo` namespace에 자동 배포합니다. rollout과 HTTP 응답의 버전 SHA를 확인하고 실패하면 직전 성공 버전을 복원합니다.
+
+기존 CP 20개·EC2 19개에 CD 10개 테스트를 추가했습니다. **Nextcloud·Redis·운영 분석기·워커 자동화 코드를 배포하는 CD와는 구분합니다.**
+
+[CD 구조·실행·복원 방법](docs/CD.md)
 
 ## 테스트 실행
 
