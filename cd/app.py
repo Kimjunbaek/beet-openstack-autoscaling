@@ -8,7 +8,7 @@ def response(path):
         return 404, {'error': 'not found'}
     return 200, {'service': 'beet-cd-demo', 'status': 'ok',
                  'release': os.environ.get('RELEASE_SHA', 'local'),
-                 'message': 'BEET CI passed; K3s deployment is healthy.'}
+                 'message': 'BEET CD v2: this update was deployed after CI passed.'}
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
